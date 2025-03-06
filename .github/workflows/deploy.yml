@@ -53,11 +53,11 @@ jobs:
           username: ${{ secrets.VPS_USERNAME }}
           key: ${{ secrets.VPS_SSH_KEY }}
           script: |
-            sudo docker run --rm \
+            docker run --rm \
               --network my_network \
-              -v ${{ secrets.CERTBOT_PATH }}:/etc/letsencrypt \
-              -v ${{ secrets.CERTBOT_WEBROOT }}:/var/www/docker/certbot/www \
-              certbot/certbot certonly --webroot -w ${{ secrets.CERTBOT_WEBROOT }} -d ${{ secrets.CERTBOT_DOMAIN }}
+              -v /var/www/docker/certbot:/etc/letsencrypt \
+              -v /var/www/docker/certbot/www:/var/www/docker/certbot/www \
+              certbot/certbot certonly --webroot -w /var/www/docker/certbot/www -d geni.kipasangen.my.id
 
       - name: Configure Nginx for HTTPS
         uses: appleboy/ssh-action@v0.1.10
