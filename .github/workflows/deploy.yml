@@ -42,7 +42,7 @@ jobs:
           username: ${{ secrets.VPS_USERNAME }}
           key: ${{ secrets.VPS_SSH_KEY }}
           script: |
-            cd /var/www/docker/maretanyar
+            cd /var/www/docker/kamilem
             if [ ! -f .env ]; then
               cp .env.example .env
               sed -i "s|APP_KEY=.*|APP_KEY=${{ secrets.APP_KEY }}|" .env
@@ -50,6 +50,18 @@ jobs:
               sed -i "s|DB_PASSWORD=.*|DB_PASSWORD=${{ secrets.DB_PASSWORD }}|" .env
               sed -i '/^DB_PASSWORD=/p; s/^DB_PASSWORD=/DB_ROOT_PASSWORD=/' .env
             fi
+
+      - name: Deploy Nginx Configuration
+        uses: appleboy/ssh-action@v0.1.10
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USERNAME }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            echo "Deploying Nginx Configuration..."
+            cp /var/www/docker/kamilem/.nginx/kamilem.conf /etc/nginx/conf.d/kamilem.conf
+            docker exec nginx-container nginx -s reload
+            echo "Nginx configuration updated & reloaded."
 
       - name: Build Docker Services
         uses: appleboy/ssh-action@v0.1.10
@@ -61,23 +73,23 @@ jobs:
             cd /var/www/docker/kamilem
             docker compose up -d --build
 
-      - name: Verify Services
-        uses: appleboy/ssh-action@v0.1.10
-        with:
-          host: ${{ secrets.VPS_HOST }}
-          username: ${{ secrets.VPS_USERNAME }}
-          key: ${{ secrets.VPS_SSH_KEY }}
-          script: |
-            cd /var/www/docker/kamilem
-            echo "Checking container statuses..."
-            docker ps | grep mysql_server
-            docker ps | grep kamilem
+            - name: Verify Services
+            uses: appleboy/ssh-action@v0.1.10
+            with:
+              host: ${{ secrets.VPS_HOST }}
+              username: ${{ secrets.VPS_USERNAME }}
+              key: ${{ secrets.VPS_SSH_KEY }}
+              script: |
+                cd /var/www/docker/kamilem
+                echo "Checking container statuses..."
+                docker ps | grep mysql_server
+                docker ps | grep kamilem
 
-            echo "Verifying network connectivity..."
-            docker exec kamilem ping -c 2 mysql_server
+                echo "Verifying network connectivity..."
+                docker exec kamilem ping -c 2 mysql_server
 
-            echo "Testing MySQL connection..."
-            docker exec mysql_server mysqladmin ping -h localhost -u root -p${{ secrets.DB_PASSWORD }}
+                echo "Testing MySQL connection..."
+                docker exec mysql_server mysqladmin ping -h localhost -u root -p${{ secrets.DB_PASSWORD }}
 
       - name: Create Database if Not Exists
         uses: appleboy/ssh-action@v0.1.10
@@ -144,38 +156,3 @@ jobs:
           script: |
             cd /var/www/docker/kamilem
             docker compose exec -T kamilem php artisan optimize:clear
-
-      - name: Configure Nginx for SSL Challenge
-        uses: appleboy/ssh-action@v0.1.10
-        with:
-          host: ${{ secrets.VPS_HOST }}
-          username: ${{ secrets.VPS_USERNAME }}
-          key: ${{ secrets.VPS_SSH_KEY }}
-          script: |
-            echo "${{ secrets.NGINX_CONF }}" | sudo tee /var/www/docker/nginx/conf.d/kamilem.conf > /dev/null
-            sudo docker exec nginx-container nginx -s reload
-            echo "Nginx config updated for SSL challenge."
-
-      - name: Run Certbot Challenge
-        uses: appleboy/ssh-action@v0.1.10
-        with:
-          host: ${{ secrets.VPS_HOST }}
-          username: ${{ secrets.VPS_USERNAME }}
-          key: ${{ secrets.VPS_SSH_KEY }}
-          script: |
-            docker run --rm \
-              --network my_network \
-              -v /var/www/docker/certbot:/etc/letsencrypt \
-              -v /var/www/docker/certbot/www:/var/www/docker/certbot/www \
-              certbot/certbot certonly --webroot -w /var/www/docker/certbot/www -d geni.kipasangen.my.id
-
-      - name: Configure Nginx for HTTPS
-        uses: appleboy/ssh-action@v0.1.10
-        with:
-          host: ${{ secrets.VPS_HOST }}
-          username: ${{ secrets.VPS_USERNAME }}
-          key: ${{ secrets.VPS_SSH_KEY }}
-          script: |
-            echo "${{ secrets.NGINX_CHALLENGED }}" | sudo tee /var/www/docker/nginx/conf.d/kamilem.conf > /dev/null
-            sudo docker exec nginx-container nginx -s reload
-            echo "Nginx config updated for HTTPS."
