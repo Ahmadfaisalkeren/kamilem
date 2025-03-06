@@ -1,0 +1,165 @@
+name: Deploy Laravel to Docker Server
+on:
+  push:
+    branches:
+      - main
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Connect to VPS
+        uses: appleboy/ssh-action@v0.1.10
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USERNAME }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            PROJECT_PATH="/var/www/docker/kamilem"
+
+            if [ -d "$PROJECT_PATH/.git" ]; then
+              cd $PROJECT_PATH
+              echo "Project exists, performing update..."
+            else
+              rm -rf $PROJECT_PATH
+              git clone -b main https://github.com/Ahmadfaisalkeren/kamilem.git $PROJECT_PATH
+              cd $PROJECT_PATH
+            fi
+
+      - name: Pull Latest Changes
+        uses: appleboy/ssh-action@v0.1.10
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USERNAME }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            cd /var/www/docker/kamilem
+            git pull origin main
+
+      - name: Configure Nginx for SSL Challenge
+        uses: appleboy/ssh-action@v0.1.10
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USERNAME }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            echo "${{ secrets.NGINX_CONF }}" | sudo tee /var/www/docker/nginx/conf.d/kamilem.conf > /dev/null
+            sudo docker exec nginx-container nginx -s reload
+            echo "Nginx config updated for SSL challenge."
+
+      - name: Run Certbot Challenge
+        uses: appleboy/ssh-action@v0.1.10
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USERNAME }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            sudo docker run --rm \
+              --network my_network \
+              -v ${{ secrets.CERTBOT_PATH }}:/etc/letsencrypt \
+              -v ${{ secrets.CERTBOT_WEBROOT }}:/var/www/docker/certbot/www \
+              certbot/certbot certonly --webroot -w ${{ secrets.CERTBOT_WEBROOT }} -d ${{ secrets.CERTBOT_DOMAIN }}
+
+      - name: Configure Nginx for HTTPS
+        uses: appleboy/ssh-action@v0.1.10
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USERNAME }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            echo "${{ secrets.NGINX_CHALLENGED }}" | sudo tee /var/www/docker/nginx/conf.d/kamilem.conf > /dev/null
+            sudo docker exec nginx-container nginx -s reload
+            echo "Nginx config updated for HTTPS."
+
+      - name: Build Docker Services
+        uses: appleboy/ssh-action@v0.1.10
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USERNAME }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            cd /var/www/docker/kamilem
+            docker compose up -d --build
+
+      - name: Verify Services
+        uses: appleboy/ssh-action@v0.1.10
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USERNAME }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            cd /var/www/docker/kamilem
+            echo "Checking container statuses..."
+            docker ps | grep mysql_server
+            docker ps | grep kamilem
+
+            echo "Verifying network connectivity..."
+            docker exec kamilem ping -c 2 mysql_server
+
+            echo "Testing MySQL connection..."
+            docker exec mysql_server mysqladmin ping -h localhost -u root -p${{ secrets.DB_PASSWORD }}
+
+      - name: Create Database if Not Exists
+        uses: appleboy/ssh-action@v0.1.10
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USERNAME }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            docker exec -i mysql_server mysql -u root -p${{ secrets.DB_PASSWORD }} -e "CREATE DATABASE IF NOT EXISTS kamilem;"
+
+      - name: Wait for Database
+        uses: appleboy/ssh-action@v0.1.10
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USERNAME }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            cd /var/www/docker/kamilem
+            counter=0
+            max_retries=15
+            until docker exec mysql_server mysql -u root -p${{ secrets.DB_PASSWORD }} -e "SELECT 1;" 2>/dev/null; do
+              counter=$((counter + 1))
+              [ $counter -eq $max_retries ] && exit 1
+              echo "Waiting for database... Attempt $counter/$max_retries"
+              sleep 5
+            done
+
+      - name: Generate Application Key
+        uses: appleboy/ssh-action@v0.1.10
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USERNAME }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            cd /var/www/docker/kamilem
+            docker compose exec -T kamilem php artisan key:generate
+
+      - name: Run Database Migrations
+        uses: appleboy/ssh-action@v0.1.10
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USERNAME }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            cd /var/www/docker/kamilem
+            docker compose exec -T kamilem php artisan migrate --force
+
+      - name: Create Storage Link
+        uses: appleboy/ssh-action@v0.1.10
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USERNAME }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            cd /var/www/docker/kamilem
+            docker compose exec -T kamilem php artisan storage:link
+
+      - name: Clear Application Cache
+        uses: appleboy/ssh-action@v0.1.10
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USERNAME }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            cd /var/www/docker/kamilem
+            docker compose exec -T kamilem php artisan optimize:clear

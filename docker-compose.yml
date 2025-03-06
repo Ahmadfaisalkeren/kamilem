@@ -1,0 +1,15 @@
+services:
+  kamilem:
+    container_name: kamilem
+    image: image_kamilem
+    build: .
+    ports:
+      - "8001:80"
+    env_file:
+      - .env
+    networks:
+      - my_network
+
+networks:
+  my_network:
+    external: true
