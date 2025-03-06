@@ -175,7 +175,7 @@ jobs:
           username: ${{ secrets.VPS_USERNAME }}
           key: ${{ secrets.VPS_SSH_KEY }}
           script: |
-            docker run --rm \
+            sudo docker run --rm \
               --network my_network \
               -v /var/www/docker/certbot:/etc/letsencrypt \
               -v /var/www/docker/certbot/www:/var/www/docker/certbot/www \
